@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')
 import models.vgg16 as vgg16
 import numpy as np
 import tensorflow as tf
@@ -16,7 +18,7 @@ def main():
 	parser.add_argument('-o', '--output_filename', default="output.jpeg", type=str, help="Specify output file name for Grad-CAM++ visualization, default name 'output.jpeg'")
 	args = parser.parse_args()
 	gpu_id = args.gpu_device
-	print gpu_id
+	print(gpu_id)
 	os.environ["CUDA_VISIBLE_DEVICES"]=gpu_id
 	run(args.file_name, args.class_label, args.output_filename)
 
