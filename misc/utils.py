@@ -78,19 +78,10 @@ def grad_CAM_plus(filename, label_id, output_filename):
     # Get last convolutional layer gradients for generating gradCAM++ visualization
     target_conv_layer = vgg.conv5_3
     target_conv_layer_grad = tf.gradients(cost, target_conv_layer)[0]
-    '''
+
     first_derivative, second_derivative, triple_derivative = \
             calc_derivatives(cost, label_index, target_conv_layer_grad)
-    '''
-    #first_derivative
-    first_derivative = tf.exp(cost)[0][label_index]*target_conv_layer_grad 	
-	
-    #second_derivative
-    second_derivative = tf.exp(cost)[0][label_index]*target_conv_layer_grad*target_conv_layer_grad 
-
-    #triple_derivative
-    triple_derivative = tf.exp(cost)[0][label_index]*target_conv_layer_grad*target_conv_layer_grad*target_conv_layer_grad  
-
+    
     sess.run(init)
     img1 = vgg_utils.load_image(filename)
     output = [0.0]*vgg.prob.get_shape().as_list()[1] #one-hot embedding for desired class activations
