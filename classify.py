@@ -1,11 +1,11 @@
 import matplotlib
 matplotlib.use('Agg')
-import models.vgg16 as vgg16
+#import models.vgg16 as vgg16
 import numpy as np
 import tensorflow as tf
 import argparse
 import misc.utils as utils
-import models.vgg_utils as vgg_utils
+#import models.vgg_utils as vgg_utils
 import os
 def run(image_filename, class_label, output_filename):
 	grad_CAM_map= utils.grad_CAM_plus(image_filename, class_label, output_filename)
