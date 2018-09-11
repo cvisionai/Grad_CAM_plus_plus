@@ -35,13 +35,15 @@ def calc_derivatives(cost, label_index, target_conv_layer_grad):
 def prep_image_for_model(filename, mean_img, size=(224,224)):
     """Open an image and make sure format is correct for GradCam++"""
     #Open and resize image
-    img = np.array(Image.open(filename).resize(size, Image.BICUBIC),dtype='float')
+    with Image.open(filename) as raw_img:
+        img = np.array(raw_img.resize(size, Image.BICUBIC),dtype='float')
     
     #Check number of channels, discard alpha channel
     if img.shape[2] == 4:
         img = img[:,:,0:3]
 
-    img = img - np.array(Image.open(mean_img),dtype='float')
+    with Image.open(mean_img) as mean_img:
+        img = img - np.array(mean_img.resize(size, Image.BICUBIC),dtype='float')
     return img
 
 def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, out_dir, mean_img_path, activation_layer='activation_46'):
@@ -60,13 +62,14 @@ def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, o
 
     #define your tensor placeholders for, labels and images
     label_vector = tf.placeholder("float", [None, nb_classes])
-    input_image = tf.placeholder("float", [None, 224, 224, 3])
+    input_image = tf.placeholder("float", [None, 512, 512, 3])
     label_index = tf.placeholder("int64")
     
     #Prepare input images for processing by network
-    p = Pool(10)
-    input_imgs = p.map(partial(prep_image_for_model,mean_img = mean_img_path),filename_list)
-    
+    with Pool(10) as p:
+        input_imgs = p.map(partial(prep_image_for_model,mean_img = mean_img_path, size=(512,512)),filename_list) 
+        p.close()
+        p.join()
     #Calculate cost at penultimate layer
     cost = model.layers[-2].output * label_vector
     #Get target convolutional layer
@@ -121,7 +124,6 @@ def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, o
 
     calc_time = time.time()
     print(f'Load and calc grad time: {time.time()-calc_time}')
-    
     #Get the heatmaps for each input image
     for idx in range(len(conv_output)):
         
@@ -150,11 +152,18 @@ def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, o
         cam = cam / np.max(cam) # scale 0 to 1.0 
         
         # Upsample with proper localization
+        '''
         padded_cam = np.zeros((15,15))
         padded_cam[4:11,4:11] = cam
         padded_cam = resize(padded_cam,(32*15,32*15),order=3)
         cam = padded_cam[136:136+224,136:136+224]
-
+        '''
+        cam = resize(cam, (512,512), order=3)
+        filename = out_dir + filename_list[idx].split('/')[-1].split(".")[0] + ".pkl"
+        cam_heatmap = (cam*-1.0) + 1.0
+        with open("output/" + filename,'wb') as f:
+            pickle.dump(cam_heatmap,f)
+        
         visualize_image = False
         if visualize_image == True:
             # Original image
@@ -163,12 +172,10 @@ def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, o
                 img1 = img1[:,:,0:3]
             #Resize cam to original image size
             cam = resize(cam, (img1.shape[0],img1.shape[1]),order=3)
-            visualize(img1, cam, out_dir + filename_list[idx].split('/')[-1])
-        
-        filename = out_dir + filename_list[idx].split('/')[-1]
-        cam = (cam*-1.0) + 1.0
-        cam_heatmap = np.array(cv2.applyColorMap(np.uint8(255*cam), cv2.COLORMAP_JET))
-        pickle.dump(cam_heatmap,open("output/" + filename.split(".")[0] + ".pkl",'wb'))
+            cam_heatmap = (cam*-1.0) + 1.0
+            cam_heatmap = np.array(cv2.applyColorMap(np.uint8(255*cam_heatmap), cv2.COLORMAP_JET))
+            visualize(img1, cam_heatmap, out_dir + filename_list[idx].split('/')[-1])
+    return    
 
 def grad_CAM_plus(filename, label_id, output_filename, arch_path, epoch, nb_classes, mean_img_path, activation_layer='activation_46'):
     #g = tf.get_default_graph()
@@ -253,10 +260,10 @@ def grad_CAM_plus(filename, label_id, output_filename, arch_path, epoch, nb_clas
     visualize(img1, cam, output_filename) 
     return cam
 
-def visualize(img, cam, filename):
-    cam = (cam*-1.0) + 1.0
-    cam_heatmap = np.array(cv2.applyColorMap(np.uint8(255*cam), cv2.COLORMAP_JET))
-    pickle.dump(cam_heatmap,open("output/" + filename.split(".")[0] + ".pkl",'wb'))
+def visualize(img, cam_heatmap, filename):
+    #cam = (cam*-1.0) + 1.0
+    #cam_heatmap = np.array(cv2.applyColorMap(np.uint8(255*cam), cv2.COLORMAP_JET))
+    #pickle.dump(cam_heatmap,open("output/" + filename.split(".")[0] + ".pkl",'wb'))
     fig, ax = plt.subplots(nrows=1,ncols=3)
 
     plt.subplot(131)
