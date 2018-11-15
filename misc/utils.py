@@ -10,9 +10,9 @@ from functools import partial
 from multiprocessing import Pool
 from skimage.transform import resize
 import matplotlib.pyplot as plt
-import os,cv2
+import os,cv2,gc
 from tensorflow.python.framework import graph_util
-
+from scipy.misc import imsave
 
 def calc_derivatives(cost, label_index, target_conv_layer_grad):
     """Define gradient calculation operations"""
@@ -66,7 +66,7 @@ def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, o
     label_index = tf.placeholder("int64")
     
     #Prepare input images for processing by network
-    with Pool(10) as p:
+    with Pool(3) as p:
         input_imgs = p.map(partial(prep_image_for_model,mean_img = mean_img_path, size=(512,512)),filename_list) 
         p.close()
         p.join()
@@ -99,17 +99,17 @@ def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, o
         
         for i,idx in enumerate(index):
             output[idx,i] = 1.0
+            np.save("output/" + out_dir + filename_list[i].split("/")[-1].split(".")[0] + ".npy", prob_val[i])
             with open("output/" + out_dir + filename_list[i].split("/")[-1].split(".")[0] + ".txt", "w") as text_file:
                 text_file.write(f'Label ID: {index[i]}')
         label_id = index
         output = np.array(output)
     
     else:
-        for i in len(input_imgs):
-            output[i][label_id] = 1.0	
+        for i in range(len(filename_list)):
+            output[label_id][i] = 1.0	
             output = np.array(output)
-            print(label_id)
-
+        label_id = np.ones((len(input_imgs),))*label_id
     # Run the tensorflow operations
     conv_output, conv_first_grad, conv_second_grad, conv_third_grad = sess.run(
         [target_conv_layer, first_derivative, second_derivative, triple_derivative], 
@@ -123,7 +123,7 @@ def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, o
     tf.reset_default_graph()
 
     calc_time = time.time()
-    print(f'Load and calc grad time: {time.time()-calc_time}')
+    print(f'Load and calc grad time: {calc_time - start_time}')
     #Get the heatmaps for each input image
     for idx in range(len(conv_output)):
         
@@ -149,8 +149,12 @@ def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, o
         
         # Passing through ReLU
         cam = np.maximum(grad_CAM_map, 0)
+        # Zeroing out last row and column
+        #if activation_layer not in ['activation_43','activation_46','activation_49']:
+        cam[-1,:] = 0
+        cam[:,-1] = 0
         cam = cam / np.max(cam) # scale 0 to 1.0 
-        
+        #cam = np.roll(cam,1,axis=(0,1)) 
         # Upsample with proper localization
         '''
         padded_cam = np.zeros((15,15))
@@ -159,22 +163,39 @@ def grad_CAM_plus_batch(filename_list, label_id, arch_path, epoch, nb_classes, o
         cam = padded_cam[136:136+224,136:136+224]
         '''
         cam = resize(cam, (512,512), order=3)
+        #cam = np.roll(cam,16,axis=(0,1))
+        '''
+        if activation_layer not in ['activation_43','activation_46','activation_49']:
+            cam = np.roll(cam,16,axis=0)
+            cam = np.roll(cam,16,axis=1)
+        else:
+            cam = np.roll(cam,8,axis=0)
+            cam = np.roll(cam,8,axis=1)
+        '''
         filename = out_dir + filename_list[idx].split('/')[-1].split(".")[0] + ".pkl"
         cam_heatmap = (cam*-1.0) + 1.0
         with open("output/" + filename,'wb') as f:
             pickle.dump(cam_heatmap,f)
-        
-        visualize_image = False
+        # Only for single class species detectors
+        '''
+        if label_id[idx] == 0:        
+            visualize_image = True
+        else:
+            visualize_image = False
+        '''
+        visualize_image = True
         if visualize_image == True:
             # Original image
+            #img1 = np.array(Image.open(filename_list[idx]).resize((512,512),resample=Image.BICUBIC),dtype='uint8')
             img1 = np.array(Image.open(filename_list[idx]),dtype='uint8')
             if img1.shape[2] == 4:
                 img1 = img1[:,:,0:3]
             #Resize cam to original image size
-            cam = resize(cam, (img1.shape[0],img1.shape[1]),order=3)
-            cam_heatmap = (cam*-1.0) + 1.0
+            cam_heatmap = resize(cam_heatmap, (img1.shape[0],img1.shape[1]),order=3)
+            #cam_heatmap = (cam*-1.0) + 1.0
             cam_heatmap = np.array(cv2.applyColorMap(np.uint8(255*cam_heatmap), cv2.COLORMAP_JET))
-            visualize(img1, cam_heatmap, out_dir + filename_list[idx].split('/')[-1])
+            visualize(img1, cam_heatmap, out_dir + filename_list[idx].split('/')[-1],prob_val[idx][int(label_id[idx])])
+    gc.collect()
     return    
 
 def grad_CAM_plus(filename, label_id, output_filename, arch_path, epoch, nb_classes, mean_img_path, activation_layer='activation_46'):
@@ -260,27 +281,38 @@ def grad_CAM_plus(filename, label_id, output_filename, arch_path, epoch, nb_clas
     visualize(img1, cam, output_filename) 
     return cam
 
-def visualize(img, cam_heatmap, filename):
+def visualize(img, cam_heatmap, filename,prob_val):
     #cam = (cam*-1.0) + 1.0
     #cam_heatmap = np.array(cv2.applyColorMap(np.uint8(255*cam), cv2.COLORMAP_JET))
     #pickle.dump(cam_heatmap,open("output/" + filename.split(".")[0] + ".pkl",'wb'))
-    fig, ax = plt.subplots(nrows=1,ncols=3)
+    #fig, ax = plt.subplots(nrows=1,ncols=3)
 
-    plt.subplot(131)
-    plt.axis("off")
-    imgplot = plt.imshow(img)
+    #plt.subplot(131)
+    #plt.axis("off")
+    #imgplot = plt.imshow(img)
 
-    plt.subplot(132)
-    plt.axis("off")
+    #plt.subplot(132)
+    #plt.axis("off")
 
-    imgplot = plt.imshow(cam_heatmap,interpolation='None')
+    #imgplot = plt.imshow(cam_heatmap,interpolation='None')
 
-    plt.subplot(133)
-    plt.axis("off")
+    #plt.subplot(133)
+    #plt.axis("off")
+    weighted_heatmap_overlay = 0.4 * prob_val**2
+    #weighted_heatmap_overlay = 0.3 * (1 - np.exp(-5.*prob_val))
+    fin = np.array((img*(1-weighted_heatmap_overlay)) + (cam_heatmap*weighted_heatmap_overlay),dtype='uint8')
+    #fin = np.array((img*0.7) + (cam_heatmap*0.3),dtype='uint8')
+    #imgplot = plt.imshow(fin)
+
+    #plt.savefig("output/" + os.path.splitext(filename)[0] + "_progression.png", dpi=600)
+    #plt.close(fig)
+    imsave("output/" + os.path.splitext(filename)[0] + "_overlay.png",fin)
+    #imsave("output/" + os.path.splitext(filename)[0] + "_aresize.png",img)
     
-    fin = np.array((img*0.7) + (cam_heatmap*0.3),dtype='uint8')
-    imgplot = plt.imshow(fin)
-
-    plt.savefig("output/" + filename, dpi=600)
-    plt.close(fig)
+    #fig2,ax2 = plt.subplots()
+    #plt.subplot(111)
+    #imgplot = plt.imshow(fin)
+    #plt.axis("off")
+    #plt.savefig("output/" + os.path.splitext(filename)[0] + "_overlay.png",transparent=True,bbox_inches='tight', pad_inches=0)
+    #plt.close()
 
